@@ -79,9 +79,9 @@ def find_latest_video(download_dir: str) -> str:
             return str(f)
     raise RuntimeError("No downloaded video file found")
 
-def is_playable_mp4(file_path: str) -> bool:
+def is_h264_mp4(file_path: str) -> bool:
     try:
-        result = subprocess.run(
+        v = subprocess.run(
             [
                 "ffprobe", "-v", "error",
                 "-select_streams", "v:0",
@@ -89,18 +89,29 @@ def is_playable_mp4(file_path: str) -> bool:
                 "-of", "default=noprint_wrappers=1:nokey=1",
                 file_path
             ],
-            capture_output=True, text=True
+            capture_output=True, text=True, check=False
         )
-        vcodec = result.stdout.strip().lower()
-        return vcodec in {"h264", "avc1"}
+        a = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=codec_name",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                file_path
+            ],
+            capture_output=True, text=True, check=False
+        )
+        vcodec = v.stdout.strip().lower()
+        acodec = a.stdout.strip().lower()
+        return file_path.lower().endswith(".mp4") and vcodec in {"h264", "avc1"} and acodec in {"aac", "mp4a"}
     except Exception:
         return False
 
 def make_telegram_friendly(file_path: str) -> str:
-    root, ext = os.path.splitext(file_path)
+    root, _ = os.path.splitext(file_path)
     out = root + ".telegram.mp4"
 
-    if file_path.lower().endswith(".mp4") and is_playable_mp4(file_path):
+    if is_h264_mp4(file_path):
         return file_path
 
     cmd = [
@@ -115,7 +126,7 @@ def make_telegram_friendly(file_path: str) -> str:
     subprocess.run(cmd, check=True, capture_output=True)
     return out
 
-async def download_video(url: str, download_dir: str, cookie_file: str | None = None, timeout: int = 300) -> str:
+async def download_video(url: str, download_dir: str, cookie_file: str | None = None, timeout: int = 600) -> str:
     Path(download_dir).mkdir(parents=True, exist_ok=True)
 
     outtmpl = os.path.join(download_dir, "%(id)s.%(ext)s")
