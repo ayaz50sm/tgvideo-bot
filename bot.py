@@ -29,7 +29,7 @@ DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "./downloads").strip()
 COOKIE_DIR = os.getenv("COOKIE_DIR", "./secrets").strip()
 DEFAULT_COOKIE_FILE = os.getenv("DEFAULT_COOKIE_FILE", "./secrets/default.txt").strip()
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "1900"))
-YTDLP_TIMEOUT = int(os.getenv("YTDLP_TIMEOUT", "180"))
+YTDLP_TIMEOUT = int(os.getenv("YTDLP_TIMEOUT", "600"))
 
 Path(DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path(COOKIE_DIR).mkdir(parents=True, exist_ok=True)
@@ -48,12 +48,43 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/post <url> = download and post to channel"
     )
 
+async def send_video_safely(bot_method, chat_id, file_path, caption, duration=None, thumb_path=None):
+    size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    with open(file_path, "rb") as vf:
+        if thumb_path and os.path.exists(thumb_path):
+            with open(thumb_path, "rb") as tf:
+                try:
+                    await bot_method(
+                        chat_id=chat_id,
+                        video=vf,
+                        caption=caption,
+                        supports_streaming=True,
+                        duration=duration,
+                        thumbnail=tf,
+                    )
+                    return f"Sent as video ({size_mb:.1f} MB)"
+                except Exception:
+                    vf.seek(0)
+        try:
+            await bot_method(
+                chat_id=chat_id,
+                video=vf,
+                caption=caption,
+                supports_streaming=True,
+                duration=duration,
+            )
+            return f"Sent as video ({size_mb:.1f} MB)"
+        except Exception:
+            pass
+
+    return None
+
 async def process_url(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str, to_channel: bool = False):
     msg = await update.message.reply_text("Processing link...")
     cookie_file = choose_cookie_file(url, COOKIE_DIR, DEFAULT_COOKIE_FILE)
 
     try:
-        info = await get_info(url, cookie_file, YTDLP_TIMEOUT)
+        info = await get_info(url, cookie_file, 180)
         caption = build_caption(info)
         thumb_path = download_thumbnail(info.get("thumbnail"), DOWNLOAD_DIR)
 
@@ -66,62 +97,54 @@ async def process_url(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
             return
 
         duration = info.get("duration")
-        width = info.get("width")
-        height = info.get("height")
-
-        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_VIDEO)
 
         if to_channel:
-            with open(file_path, "rb") as vf:
-                if thumb_path and os.path.exists(thumb_path):
-                    with open(thumb_path, "rb") as tf:
-                        await context.bot.send_video(
-                            chat_id=CHANNEL_ID,
-                            video=vf,
-                            caption=caption,
-                            supports_streaming=True,
-                            duration=duration,
-                            width=width,
-                            height=height,
-                            thumbnail=tf,
-                        )
-                else:
-                    await context.bot.send_video(
+            await context.bot.send_chat_action(CHANNEL_ID, ChatAction.UPLOAD_VIDEO)
+            result = await send_video_safely(
+                context.bot.send_video,
+                CHANNEL_ID,
+                file_path,
+                caption,
+                duration=duration,
+                thumb_path=thumb_path
+            )
+            if result:
+                await msg.edit_text("Channel e post hoye geche.")
+            else:
+                with open(file_path, "rb") as f:
+                    await context.bot.send_document(
                         chat_id=CHANNEL_ID,
-                        video=vf,
-                        caption=caption,
-                        supports_streaming=True,
-                        duration=duration,
-                        width=width,
-                        height=height,
+                        document=f,
+                        caption=caption
                     )
-            await msg.edit_text("Channel e post hoye geche.")
+                await msg.edit_text("Channel e document hisebe post hoye geche.")
         else:
-            with open(file_path, "rb") as vf:
-                if thumb_path and os.path.exists(thumb_path):
-                    with open(thumb_path, "rb") as tf:
-                        await update.message.reply_video(
-                            video=vf,
-                            caption=caption,
-                            supports_streaming=True,
-                            duration=duration,
-                            width=width,
-                            height=height,
-                            thumbnail=tf,
-                        )
-                else:
-                    await update.message.reply_video(
-                        video=vf,
-                        caption=caption,
-                        supports_streaming=True,
-                        duration=duration,
-                        width=width,
-                        height=height,
+            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_VIDEO)
+            result = await send_video_safely(
+                update.message.reply_video,
+                None,
+                file_path,
+                caption,
+                duration=duration,
+                thumb_path=thumb_path
+            )
+            if result:
+                await msg.edit_text("Done.")
+            else:
+                with open(file_path, "rb") as f:
+                    await update.message.reply_document(
+                        document=f,
+                        caption=caption
                     )
-            await msg.edit_text("Done.")
-
+                await msg.edit_text("Done. Video hisebe na, document hisebe pathano hoise.")
     except Exception as e:
-        await msg.edit_text(f"Error: {e}")
+        err = str(e)
+        if "403" in err:
+            await msg.edit_text("Source blocked or access denied (403).")
+        elif "timeout" in err.lower():
+            await msg.edit_text("Timed out. Boro file ba slow source hote pare.")
+        else:
+            await msg.edit_text(f"Error: {err}")
 
 async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_user or not is_admin(update.effective_user.id):
@@ -137,7 +160,7 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("Info nicchi...")
 
     try:
-        info = await get_info(url, cookie_file, YTDLP_TIMEOUT)
+        info = await get_info(url, cookie_file, 180)
         await msg.edit_text(build_caption(info))
     except Exception as e:
         await msg.edit_text(f"Error: {e}")
