@@ -61,7 +61,7 @@ pkg install git python ffmpeg
 Clone your repo:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/tgvideo-bot.git
+git clone https://github.com/ayaz50sm/tgvideo-bot.git
 cd tgvideo-bot
 ```
 
