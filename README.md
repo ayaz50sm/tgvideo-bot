@@ -91,7 +91,12 @@ Create your `.env` file from the example:
 cp .env.example .env
 nano .env
 ```
+One Command Update
 
+```bash
+chmod +x update.sh
+./update.sh
+```
 ## .env configuration
 
 Put your real values into `.env`:
