@@ -29,7 +29,7 @@ DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "./downloads").strip()
 COOKIE_DIR = os.getenv("COOKIE_DIR", "./secrets").strip()
 DEFAULT_COOKIE_FILE = os.getenv("DEFAULT_COOKIE_FILE", "./secrets/default.txt").strip()
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "1900"))
-YTDLP_TIMEOUT = int(os.getenv("YTDLP_TIMEOUT", "600"))
+YTDLP_TIMEOUT = int(os.getenv("YTDLP_TIMEOUT", "900"))
 
 Path(DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path(COOKIE_DIR).mkdir(parents=True, exist_ok=True)
@@ -48,36 +48,70 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/post <url> = download and post to channel"
     )
 
-async def send_video_safely(bot_method, chat_id, file_path, caption, duration=None, thumb_path=None):
-    size_mb = os.path.getsize(file_path) / (1024 * 1024)
+async def send_to_chat(update: Update, file_path: str, caption: str, duration=None, thumb_path=None):
     with open(file_path, "rb") as vf:
         if thumb_path and os.path.exists(thumb_path):
-            with open(thumb_path, "rb") as tf:
-                try:
-                    await bot_method(
-                        chat_id=chat_id,
+            try:
+                with open(thumb_path, "rb") as tf:
+                    await update.message.reply_video(
                         video=vf,
                         caption=caption,
                         supports_streaming=True,
                         duration=duration,
                         thumbnail=tf,
                     )
-                    return f"Sent as video ({size_mb:.1f} MB)"
-                except Exception:
-                    vf.seek(0)
+                return
+            except Exception:
+                pass
+
+    with open(file_path, "rb") as vf:
         try:
-            await bot_method(
-                chat_id=chat_id,
+            await update.message.reply_video(
                 video=vf,
                 caption=caption,
                 supports_streaming=True,
                 duration=duration,
             )
-            return f"Sent as video ({size_mb:.1f} MB)"
         except Exception:
-            pass
+            vf.seek(0)
+            await update.message.reply_document(
+                document=vf,
+                caption=caption,
+            )
 
-    return None
+async def send_to_channel(context: ContextTypes.DEFAULT_TYPE, file_path: str, caption: str, duration=None, thumb_path=None):
+    with open(file_path, "rb") as vf:
+        if thumb_path and os.path.exists(thumb_path):
+            try:
+                with open(thumb_path, "rb") as tf:
+                    await context.bot.send_video(
+                        chat_id=CHANNEL_ID,
+                        video=vf,
+                        caption=caption,
+                        supports_streaming=True,
+                        duration=duration,
+                        thumbnail=tf,
+                    )
+                return
+            except Exception:
+                pass
+
+    with open(file_path, "rb") as vf:
+        try:
+            await context.bot.send_video(
+                chat_id=CHANNEL_ID,
+                video=vf,
+                caption=caption,
+                supports_streaming=True,
+                duration=duration,
+            )
+        except Exception:
+            vf.seek(0)
+            await context.bot.send_document(
+                chat_id=CHANNEL_ID,
+                document=vf,
+                caption=caption,
+            )
 
 async def process_url(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str, to_channel: bool = False):
     msg = await update.message.reply_text("Processing link...")
@@ -100,43 +134,13 @@ async def process_url(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
 
         if to_channel:
             await context.bot.send_chat_action(CHANNEL_ID, ChatAction.UPLOAD_VIDEO)
-            result = await send_video_safely(
-                context.bot.send_video,
-                CHANNEL_ID,
-                file_path,
-                caption,
-                duration=duration,
-                thumb_path=thumb_path
-            )
-            if result:
-                await msg.edit_text("Channel e post hoye geche.")
-            else:
-                with open(file_path, "rb") as f:
-                    await context.bot.send_document(
-                        chat_id=CHANNEL_ID,
-                        document=f,
-                        caption=caption
-                    )
-                await msg.edit_text("Channel e document hisebe post hoye geche.")
+            await send_to_channel(context, file_path, caption, duration=duration, thumb_path=thumb_path)
+            await msg.edit_text("Channel e post hoye geche.")
         else:
             await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_VIDEO)
-            result = await send_video_safely(
-                update.message.reply_video,
-                None,
-                file_path,
-                caption,
-                duration=duration,
-                thumb_path=thumb_path
-            )
-            if result:
-                await msg.edit_text("Done.")
-            else:
-                with open(file_path, "rb") as f:
-                    await update.message.reply_document(
-                        document=f,
-                        caption=caption
-                    )
-                await msg.edit_text("Done. Video hisebe na, document hisebe pathano hoise.")
+            await send_to_chat(update, file_path, caption, duration=duration, thumb_path=thumb_path)
+            await msg.edit_text("Done.")
+
     except Exception as e:
         err = str(e)
         if "403" in err:
